@@ -1,33 +1,51 @@
 import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint
+import math
 
 __all__ = ['iresnet18', 'iresnet34', 'iresnet50', 'iresnet100', 'iresnet200']
 using_ckpt = False
 
-def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
-    """3x3 convolution with padding"""
-    return nn.Conv2d(in_planes,
-                     out_planes,
-                     kernel_size=3,
-                     stride=stride,
-                     padding=dilation,
-                     groups=groups,
-                     bias=False,
-                     dilation=dilation)
+# Fourier Feature Mapping
+class FourierFeatureMapping(nn.Module):
+    def __init__(self, in_dim, mapping_size=64, scale=10):
+        super().__init__()
+        self.B = nn.Parameter(torch.randn(in_dim, mapping_size) * scale, requires_grad=False)
 
+    def forward(self, x):
+        N, C, H, W = x.shape
+        x_flat = x.permute(0, 2, 3, 1).reshape(N * H * W, C)
+        x_proj = 2 * math.pi * x_flat @ self.B
+        mapped = torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
+        return mapped.reshape(N, H, W, -1).permute(0, 3, 1, 2)
+
+# FAN Layer
+class FANLayer(nn.Module):
+    def __init__(self, dim, K=16):
+        super().__init__()
+        self.K = K
+        self.a = nn.Parameter(torch.randn(dim, K))
+        self.b = nn.Parameter(torch.randn(dim, K))
+        self.linear = nn.Linear(2 * K, dim)
+
+    def forward(self, x):
+        freq = torch.arange(1, self.K + 1, device=x.device).view(1, 1, -1)
+        x_exp = x.unsqueeze(-1) * freq
+        sin_cos = torch.cat([torch.sin(self.a * x_exp), torch.cos(self.b * x_exp)], dim=-1)
+        return self.linear(sin_cos)
+
+# Conv helpers
+def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=dilation,
+                     groups=groups, bias=False, dilation=dilation)
 
 def conv1x1(in_planes, out_planes, stride=1):
-    """1x1 convolution"""
-    return nn.Conv2d(in_planes,
-                     out_planes,
-                     kernel_size=1,
-                     stride=stride,
-                     bias=False)
+    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
-
+# Basic block
 class IBasicBlock(nn.Module):
     expansion = 1
+
     def __init__(self, inplanes, planes, stride=1, downsample=None,
                  groups=1, base_width=64, dilation=1):
         super(IBasicBlock, self).__init__()
@@ -35,12 +53,12 @@ class IBasicBlock(nn.Module):
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
         if dilation > 1:
             raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
-        self.bn1 = nn.BatchNorm2d(inplanes, eps=1e-05,)
+        self.bn1 = nn.BatchNorm2d(inplanes, eps=1e-05)
         self.conv1 = conv3x3(inplanes, planes)
-        self.bn2 = nn.BatchNorm2d(planes, eps=1e-05,)
+        self.bn2 = nn.BatchNorm2d(planes, eps=1e-05)
         self.prelu = nn.PReLU(planes)
         self.conv2 = conv3x3(planes, planes, stride)
-        self.bn3 = nn.BatchNorm2d(planes, eps=1e-05,)
+        self.bn3 = nn.BatchNorm2d(planes, eps=1e-05)
         self.downsample = downsample
         self.stride = stride
 
@@ -55,7 +73,7 @@ class IBasicBlock(nn.Module):
         if self.downsample is not None:
             identity = self.downsample(x)
         out += identity
-        return out        
+        return out
 
     def forward(self, x):
         if self.training and using_ckpt:
@@ -63,46 +81,49 @@ class IBasicBlock(nn.Module):
         else:
             return self.forward_impl(x)
 
-
+# Main ResNet
 class IResNet(nn.Module):
     fc_scale = 7 * 7
-    def __init__(self,
-                 block, layers, dropout=0, num_features=512, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None, fp16=False):
+
+    def __init__(self, block, layers, dropout=0, num_features=512, zero_init_residual=False,
+                 groups=1, width_per_group=64, replace_stride_with_dilation=None, fp16=False,
+                 use_ffm=True, use_fan=True):
         super(IResNet, self).__init__()
         self.extra_gflops = 0.0
         self.fp16 = fp16
         self.inplanes = 64
         self.dilation = 1
+        self.use_ffm = use_ffm
+        self.use_fan = use_fan
+
         if replace_stride_with_dilation is None:
             replace_stride_with_dilation = [False, False, False]
         if len(replace_stride_with_dilation) != 3:
-            raise ValueError("replace_stride_with_dilation should be None "
-                             "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
+            raise ValueError("replace_stride_with_dilation should be None or a 3-element tuple")
+
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False)
+
+        if self.use_ffm:
+            self.ffm = FourierFeatureMapping(3)
+            self.conv1 = nn.Conv2d(128, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False)
+        else:
+            self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False)
+
         self.bn1 = nn.BatchNorm2d(self.inplanes, eps=1e-05)
         self.prelu = nn.PReLU(self.inplanes)
         self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
-        self.layer2 = self._make_layer(block,
-                                       128,
-                                       layers[1],
-                                       stride=2,
-                                       dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block,
-                                       256,
-                                       layers[2],
-                                       stride=2,
-                                       dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block,
-                                       512,
-                                       layers[3],
-                                       stride=2,
-                                       dilate=replace_stride_with_dilation[2])
-        self.bn2 = nn.BatchNorm2d(512 * block.expansion, eps=1e-05,)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
+
+        self.bn2 = nn.BatchNorm2d(512 * block.expansion, eps=1e-05)
         self.dropout = nn.Dropout(p=dropout, inplace=True)
-        self.fc = nn.Linear(512 * block.expansion * self.fc_scale, num_features)
+
+        fc_in = 512 * block.expansion * self.fc_scale
+        self.fc = nn.Linear(fc_in, num_features)
+        if self.use_fan:
+            self.fan = FANLayer(num_features)
         self.features = nn.BatchNorm1d(num_features, eps=1e-05)
         nn.init.constant_(self.features.weight, 1.0)
         self.features.weight.requires_grad = False
@@ -128,25 +149,23 @@ class IResNet(nn.Module):
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
                 conv1x1(self.inplanes, planes * block.expansion, stride),
-                nn.BatchNorm2d(planes * block.expansion, eps=1e-05, ),
+                nn.BatchNorm2d(planes * block.expansion, eps=1e-05),
             )
+
         layers = []
-        layers.append(
-            block(self.inplanes, planes, stride, downsample, self.groups,
-                  self.base_width, previous_dilation))
+        layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
+                            self.base_width, previous_dilation))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(
-                block(self.inplanes,
-                      planes,
-                      groups=self.groups,
-                      base_width=self.base_width,
-                      dilation=self.dilation))
+            layers.append(block(self.inplanes, planes, groups=self.groups,
+                                base_width=self.base_width, dilation=self.dilation))
 
         return nn.Sequential(*layers)
 
     def forward(self, x):
         with torch.cuda.amp.autocast(self.fp16):
+            if self.use_ffm:
+                x = self.ffm(x)
             x = self.conv1(x)
             x = self.bn1(x)
             x = self.prelu(x)
@@ -158,37 +177,28 @@ class IResNet(nn.Module):
             x = torch.flatten(x, 1)
             x = self.dropout(x)
         x = self.fc(x.float() if self.fp16 else x)
+        if self.use_fan:
+            x = self.fan(x)
         x = self.features(x)
         return x
-
 
 def _iresnet(arch, block, layers, pretrained, progress, **kwargs):
     model = IResNet(block, layers, **kwargs)
     if pretrained:
-        raise ValueError()
+        raise ValueError("Pretrained not supported")
     return model
 
-
 def iresnet18(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet18', IBasicBlock, [2, 2, 2, 2], pretrained,
-                    progress, **kwargs)
-
+    return _iresnet('iresnet18', IBasicBlock, [2, 2, 2, 2], pretrained, progress, **kwargs)
 
 def iresnet34(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet34', IBasicBlock, [3, 4, 6, 3], pretrained,
-                    progress, **kwargs)
-
+    return _iresnet('iresnet34', IBasicBlock, [3, 4, 6, 3], pretrained, progress, **kwargs)
 
 def iresnet50(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet50', IBasicBlock, [3, 4, 14, 3], pretrained,
-                    progress, **kwargs)
-
+    return _iresnet('iresnet50', IBasicBlock, [3, 4, 14, 3], pretrained, progress, **kwargs)
 
 def iresnet100(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet100', IBasicBlock, [3, 13, 30, 3], pretrained,
-                    progress, **kwargs)
-
+    return _iresnet('iresnet100', IBasicBlock, [3, 13, 30, 3], pretrained, progress, **kwargs)
 
 def iresnet200(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet200', IBasicBlock, [6, 26, 60, 6], pretrained,
-                    progress, **kwargs)
+    return _iresnet('iresnet200', IBasicBlock, [6, 26, 60, 6], pretrained, progress, **kwargs)
