@@ -21,18 +21,39 @@ class FourierFeatureMapping(nn.Module):
 
 # FAN Layer
 class FANLayer(nn.Module):
-    def __init__(self, dim, K=16):
-        super().__init__()
-        self.K = K
-        self.a = nn.Parameter(torch.randn(dim, K))
-        self.b = nn.Parameter(torch.randn(dim, K))
-        self.linear = nn.Linear(2 * K, dim)
+    """
+    FAN Layer as described in FAN (Fourier Attention Network for Medical Image Segmentation)
+    Reference: https://arxiv.org/abs/2410.02675
+    """
+    def __init__(self, input_dim, output_dim=None, p_ratio=0.25, activation='gelu', use_p_bias=True):
+        super(FANLayer, self).__init__()
+
+        assert 0 < p_ratio < 0.5, "p_ratio must be in (0, 0.5)"
+        self.p_ratio = p_ratio
+
+        self.output_dim = output_dim if output_dim is not None else input_dim
+        p_dim = int(self.output_dim * p_ratio)
+        g_dim = self.output_dim - 2 * p_dim  # because cos(p) + sin(p)
+
+        self.linear_p = nn.Linear(input_dim, p_dim, bias=use_p_bias)
+        self.linear_g = nn.Linear(input_dim, g_dim)
+
+        if isinstance(activation, str):
+            self.activation = getattr(nn.functional, activation)
+        else:
+            self.activation = activation if activation else lambda x: x
 
     def forward(self, x):
-        freq = torch.arange(1, self.K + 1, device=x.device).view(1, 1, -1)
-        x_exp = x.unsqueeze(-1) * freq
-        sin_cos = torch.cat([torch.sin(self.a * x_exp), torch.cos(self.b * x_exp)], dim=-1)
-        return self.linear(sin_cos)
+        """
+        Input: x of shape (B, D)
+        Output: concatenation of cos(p), sin(p), and g(x)
+        Shape: (B, output_dim)
+        """
+        p = self.linear_p(x)
+        g = self.activation(self.linear_g(x))
+
+        return torch.cat([torch.cos(p), torch.sin(p), g], dim=-1)
+
 
 # Conv helpers
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
@@ -123,7 +144,8 @@ class IResNet(nn.Module):
         fc_in = 512 * block.expansion * self.fc_scale
         self.fc = nn.Linear(fc_in, num_features)
         if self.use_fan:
-            self.fan = FANLayer(num_features)
+            self.fan = FANLayer(num_features, output_dim=num_features)  # hoặc tăng output_dim nếu muốn
+
         self.features = nn.BatchNorm1d(num_features, eps=1e-05)
         nn.init.constant_(self.features.weight, 1.0)
         self.features.weight.requires_grad = False
