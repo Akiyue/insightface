@@ -22,7 +22,7 @@ class FourierFeatureMapping(nn.Module):
 # FAN Layer
 class FANLayer(nn.Module):
     """
-    FAN Layer as described in FAN (Fourier Attention Network for Medical Image Segmentation)
+    FAN Layer as described in FAN
     Reference: https://arxiv.org/abs/2410.02675
     """
     def __init__(self, input_dim, output_dim=None, p_ratio=0.25, activation='gelu', use_p_bias=True):
