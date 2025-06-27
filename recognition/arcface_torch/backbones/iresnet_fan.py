@@ -144,7 +144,8 @@ class IResNet(nn.Module):
         fc_in = 512 * block.expansion * self.fc_scale
         self.fc = nn.Linear(fc_in, num_features)
         if self.use_fan:
-            self.fan = FANLayer(num_features, output_dim=num_features)  # hoặc tăng output_dim nếu muốn
+            self.fan = FANLayer(num_features, output_dim=num_features, p_ratio=0.25)
+
 
         self.features = nn.BatchNorm1d(num_features, eps=1e-05)
         nn.init.constant_(self.features.weight, 1.0)
