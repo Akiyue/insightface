@@ -19,7 +19,7 @@ config.lr = 0.02
 config.verbose = 2000
 config.dali = False
 
-config.rec = "/content/drive/MyDrive/colab/faces_webface_112x112"
+config.rec = "/kaggle/input/faces-webface-112x112/faces_webface_112x112"
 config.num_classes = 10575
 config.num_image = 494414
 config.num_epoch = 20
