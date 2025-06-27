@@ -136,7 +136,13 @@ class PartialFC_V2(torch.nn.Module):
         _gather_labels = [
             torch.zeros(batch_size).long().cuda() for _ in range(self.world_size)
         ]
-        _list_embeddings = AllGather(local_embeddings, *_gather_embeddings)
+        if distributed.is_available() and distributed.is_initialized() and distributed.get_world_size() > 1:
+            _list_embeddings = AllGather(local_embeddings, *_gather_embeddings)
+        else:
+            _list_embeddings = [local_embeddings]
+
+        embeddings = torch.cat(_list_embeddings, dim=0)
+        # _list_embeddings = AllGather(local_embeddings, *_gather_embeddings)
         distributed.all_gather(_gather_labels, local_labels)
 
         embeddings = torch.cat(_list_embeddings)
