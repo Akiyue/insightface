@@ -213,6 +213,9 @@ def load_bin(path, image_size):
         img = mx.image.imdecode(_bin)
         if img.shape[1] != image_size[0]:
             img = mx.image.resize_short(img, image_size[0])
+        from mxnet import np, nd
+        # Chuyển về legacy trước khi transpose
+        img = img.as_nd_ndarray()
         img = nd.transpose(img, axes=(2, 0, 1))
         for flip in [0, 1]:
             if flip == 1:
