@@ -7,54 +7,23 @@ import torchvision.transforms.functional as F
 __all__ = ['iresnet18', 'iresnet34', 'iresnet50', 'iresnet100', 'iresnet200', 'CustomInputPreprocessor']
 using_ckpt = False
 
-
-# ==========================================================================================
-# LỚP TIỀN XỬ LÝ MỚI
-# ==========================================================================================
 class CustomInputPreprocessor(nn.Module):
-    """
-    Module để tiền xử lý ảnh đầu vào.
-    Chuyển đổi ảnh RGB (3 kênh) thành tensor 3 kênh mới:
-    - Kênh 1: Ảnh xám (Grayscale)
-    - Kênh 2: Mask khuôn mặt (được cung cấp)
-    - Kênh 3: Ảnh xám cộng với nhiễu Gaussian
-    """
     def __init__(self, noise_std=0.1):
-        """
-        Khởi tạo preprocessor.
-        :param noise_std: Độ lệch chuẩn của nhiễu Gaussian được thêm vào.
-        """
         super().__init__()
         self.noise_std = noise_std
 
     def forward(self, rgb_images, face_masks):
-        """
-        :param rgb_images: Tensor ảnh RGB với shape [B, 3, H, W]
-        :param face_masks: Tensor mask khuôn mặt với shape [B, 1, H, W]
-        :return: Tensor đã xử lý với shape [B, 3, H, W]
-        """
-        # Kênh 1: Chuyển đổi sang ảnh xám
         grayscale_channel = F.rgb_to_grayscale(rgb_images)
 
-        # Kênh 2: Mask khuôn mặt
         mask_channel = face_masks
 
-        # Kênh 3: Ảnh xám cộng nhiễu
         noise = torch.randn_like(grayscale_channel) * self.noise_std
         noisy_grayscale_channel = grayscale_channel + noise
-        noisy_grayscale_channel = torch.clamp(noisy_grayscale_channel, 0.0, 1.0) # Giả sử ảnh đầu vào đã được chuẩn hóa về [0,1]
+        noisy_grayscale_channel = torch.clamp(noisy_grayscale_channel, 0.0, 1.0) 
 
-        # Kết hợp 3 kênh
         processed_input = torch.cat([grayscale_channel, mask_channel, noisy_grayscale_channel], dim=1)
         return processed_input
 
-# ==========================================================================================
-# CÁC LỚP CÒN LẠI CỦA MÔ HÌNH
-# ==========================================================================================
-
-# LỚP FourierFeatureMapping ĐÃ BỊ XÓA BỎ
-
-# FAN Layer
 class FANLayer(nn.Module):
     def __init__(self, input_dim, output_dim=None, p_ratio=0.25, activation='gelu', use_p_bias=True):
         super(FANLayer, self).__init__()
@@ -75,7 +44,6 @@ class FANLayer(nn.Module):
         g = self.activation(self.linear_g(x))
         return torch.cat([torch.cos(p), torch.sin(p), g], dim=-1)
 
-# Conv helpers
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=dilation,
                      groups=groups, bias=False, dilation=dilation)
@@ -83,7 +51,6 @@ def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
 def conv1x1(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
-# Basic block
 class IBasicBlock(nn.Module):
     expansion = 1
     def __init__(self, inplanes, planes, stride=1, downsample=None,
@@ -121,19 +88,17 @@ class IBasicBlock(nn.Module):
         else:
             return self.forward_impl(x)
 
-# Main ResNet
 class IResNet(nn.Module):
     fc_scale = 7 * 7
 
     def __init__(self, block, layers, dropout=0, num_features=512, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None, fp16=False,
-                 use_fan=True): # << THAY ĐỔI: Đã xóa tham số `use_ffm`
+                 use_fan=True): 
         super(IResNet, self).__init__()
         self.extra_gflops = 0.0
         self.fp16 = fp16
         self.inplanes = 64
         self.dilation = 1
-        # self.use_ffm = use_ffm # << THAY ĐỔI: Đã xóa
         self.use_fan = use_fan
 
         if replace_stride_with_dilation is None:
@@ -144,8 +109,6 @@ class IResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
 
-        # << THAY ĐỔI: Logic của conv1 được đơn giản hóa, luôn nhận 3 kênh đầu vào
-        # Đầu vào bây giờ luôn là 3 kênh (ảnh xám, mask, ảnh xám nhiễu)
         self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False)
 
         self.bn1 = nn.BatchNorm2d(self.inplanes, eps=1e-05)
@@ -200,11 +163,7 @@ class IResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        # << THAY ĐỔI: Đầu vào x bây giờ được kỳ vọng là tensor đã qua xử lý
         with torch.cuda.amp.autocast(self.fp16):
-            # << THAY ĐỔI: Dòng gọi FFM đã bị xóa
-            # if self.use_ffm:
-            #     x = self.ffm(x)
             x = self.conv1(x)
             x = self.bn1(x)
             x = self.prelu(x)
@@ -222,7 +181,6 @@ class IResNet(nn.Module):
         return x
 
 def _iresnet(arch, block, layers, pretrained, progress, **kwargs):
-    # << THAY ĐỔI: Loại bỏ `use_ffm` khỏi kwargs để tránh lỗi
     kwargs.pop('use_ffm', None)
     model = IResNet(block, layers, **kwargs)
     if pretrained:
