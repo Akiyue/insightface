@@ -6,7 +6,6 @@ import mediapipe as mp
 import numpy as np
 from torch.utils.checkpoint import checkpoint
 
-# ======= Face Mask Extractor using MediaPipe ==========
 class FaceMaskExtractor:
     def __init__(self, image_size=(112, 112)):
         self.detector = mp.solutions.face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.5)
@@ -60,7 +59,6 @@ class CustomInputPreprocessor(nn.Module):
 
         return torch.cat([grayscale, mask, noisy], dim=1)  # [B, 3, H, W]
 
-# ========= ResNet Blocks ==========
 def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
 
@@ -96,14 +94,17 @@ class IBasicBlock(nn.Module):
     def forward(self, x):
         return checkpoint(self.forward_impl, x) if self.training else self.forward_impl(x)
 
-# ========= ResNet Backbone ==========
 class IResNet(nn.Module):
     fc_scale = 7 * 7
 
-    def __init__(self, block, layers, input_channels=3, num_features=512, dropout=0.4):
+    def __init__(self, block, layers, input_channels=3, num_features=512, dropout=0.4, use_preprocessing=True, noise_std=0.1):
         super().__init__()
-        self.inplanes = 64
+        self.use_preprocessing = use_preprocessing
+        if use_preprocessing:
+            self.preprocessor = CustomInputPreprocessor(noise_std=noise_std)
+            input_channels = 3
 
+        self.inplanes = 64
         self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(64, eps=1e-5)
         self.prelu = nn.PReLU(64)
@@ -134,6 +135,9 @@ class IResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        if self.use_preprocessing:
+            x = self.preprocessor(x)
+
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.prelu(x)
@@ -148,13 +152,3 @@ class IResNet(nn.Module):
         x = self.features(x)
         return x
 
-# ======== Tích hợp toàn bộ: Wrapper Model =========
-class FaceNetWithPreprocessing(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.preprocessor = CustomInputPreprocessor(noise_std=0.1)
-        self.backbone = IResNet(IBasicBlock, [2, 2, 2, 2], input_channels=3)
-
-    def forward(self, rgb_images):
-        x = self.preprocessor(rgb_images) 
-        return self.backbone(x)
