@@ -217,7 +217,7 @@ def iresnet18(pretrained=False, progress=True, **kwargs):
 def iresnet34(pretrained=False, progress=True, **kwargs):
     return _iresnet('iresnet34', IBasicBlock, [3, 4, 6, 3], pretrained, progress, **kwargs)
 
-def iresnet50(pretrained=False, progress=True, **kwargs):
+def iresnet50_fan(pretrained=False, progress=True, **kwargs):
     return _iresnet('iresnet50', IBasicBlock, [3, 4, 14, 3], pretrained, progress, **kwargs)
 
 def iresnet100(pretrained=False, progress=True, **kwargs):
