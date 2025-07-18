@@ -44,7 +44,9 @@ class FaceMaskExtractor:
                     x2 = min(w, x2)
                     y2 = min(h, y2)
                     mask[y1:y2, x1:x2] = 1.0
-            masks.append(torch.tensor(mask).unsqueeze(0))
+            masks.append(torch.tensor(mask, device=image_tensor.device).unsqueeze(0))
+
+            # masks.append(torch.tensor(mask).unsqueeze(0))
 
         return torch.stack(masks).to(image_tensor.device) 
 
