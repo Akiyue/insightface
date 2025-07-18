@@ -16,18 +16,14 @@ class FaceMaskExtractor:
         self.image_size = image_size
 
     def get_face_mask(self, image_tensor):
-        """
-        Args:
-            image_tensor: torch.Tensor with shape [B, 3, H, W] and pixel values in [0, 1]
-        Returns:
-            mask_tensor: torch.Tensor with shape [B, 1, H, W] with 1s in face regions
-        """
-        image_tensor = image_tensor.detach().cpu()
-        b, c, h, w = image_tensor.shape
+        device = image_tensor.device  
+
+        image_tensor_cpu = image_tensor.detach().cpu()
+        b, c, h, w = image_tensor_cpu.shape
         masks = []
 
         for i in range(b):
-            img_np = (image_tensor[i].permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+            img_np = (image_tensor_cpu[i].permute(1, 2, 0).numpy() * 255).astype(np.uint8)
             results = self.detector.process(img_np)
 
             mask = np.zeros((h, w), dtype=np.float32)
@@ -38,17 +34,12 @@ class FaceMaskExtractor:
                     y1 = int(bbox.ymin * h)
                     x2 = int((bbox.xmin + bbox.width) * w)
                     y2 = int((bbox.ymin + bbox.height) * h)
+                    mask[max(0, y1):min(h, y2), max(0, x1):min(w, x2)] = 1.0
 
-                    x1 = max(0, x1)
-                    y1 = max(0, y1)
-                    x2 = min(w, x2)
-                    y2 = min(h, y2)
-                    mask[y1:y2, x1:x2] = 1.0
-            masks.append(torch.tensor(mask, device=image_tensor.device).unsqueeze(0))
+            masks.append(torch.tensor(mask).unsqueeze(0))
 
-            # masks.append(torch.tensor(mask).unsqueeze(0))
-
-        return torch.stack(masks).to(image_tensor.device) 
+        masks = torch.stack(masks)  
+        return masks.to(device) 
 
 class CustomInputPreprocessor(nn.Module):
     def __init__(self, noise_std=0.1):
