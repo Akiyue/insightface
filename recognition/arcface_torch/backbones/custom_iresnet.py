@@ -1,10 +1,75 @@
 
 import torch
-from torch import nn
+import torch.nn as nn
+import torchvision.transforms.functional as TF
+import cv2
+import mediapipe as mp
+import numpy as np
 from torch.utils.checkpoint import checkpoint
 
 __all__ = ['iresnet18', 'iresnet34', 'iresnet50', 'iresnet100', 'iresnet200']
 using_ckpt = False
+
+class FaceMaskExtractor:
+    def __init__(self, image_size=(112, 112)):
+        self.detector = mp.solutions.face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.5)
+        self.image_size = image_size
+
+    def get_face_mask(self, image_tensor):
+        """
+        Args:
+            image_tensor: torch.Tensor with shape [B, 3, H, W] and pixel values in [0, 1]
+        Returns:
+            mask_tensor: torch.Tensor with shape [B, 1, H, W] with 1s in face regions
+        """
+        image_tensor = image_tensor.detach().cpu()
+        b, c, h, w = image_tensor.shape
+        masks = []
+
+        for i in range(b):
+            img_np = (image_tensor[i].permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+            results = self.detector.process(img_np)
+
+            mask = np.zeros((h, w), dtype=np.float32)
+            if results.detections:
+                for det in results.detections:
+                    bbox = det.location_data.relative_bounding_box
+                    x1 = int(bbox.xmin * w)
+                    y1 = int(bbox.ymin * h)
+                    x2 = int((bbox.xmin + bbox.width) * w)
+                    y2 = int((bbox.ymin + bbox.height) * h)
+
+                    x1 = max(0, x1)
+                    y1 = max(0, y1)
+                    x2 = min(w, x2)
+                    y2 = min(h, y2)
+                    mask[y1:y2, x1:x2] = 1.0
+            masks.append(torch.tensor(mask).unsqueeze(0))
+
+        return torch.stack(masks).to(image_tensor.device) 
+
+class CustomInputPreprocessor(nn.Module):
+    def __init__(self, noise_std=0.1):
+        super().__init__()
+        self.noise_std = noise_std
+        self.mask_extractor = FaceMaskExtractor()
+
+    def forward(self, rgb_images):
+        grayscale = TF.rgb_to_grayscale(rgb_images)  # [B, 1, H, W]
+        mask = self.mask_extractor.get_face_mask(rgb_images)  # [B, 1, H, W]
+
+        noise = torch.randn_like(grayscale) * self.noise_std
+        noisy = torch.clamp(grayscale + noise, 0.0, 1.0)
+
+        return torch.cat([grayscale, mask, noisy], dim=1)  # [B, 3, H, W]
+
+
+def conv3x3(in_planes, out_planes, stride=1):
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
+
+def conv1x1(in_planes, out_planes, stride=1):
+    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
+
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
