@@ -134,12 +134,17 @@ class IResNet(nn.Module):
     fc_scale = 7 * 7
     def __init__(self,
                  block, layers, dropout=0, num_features=512, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None, fp16=False):
+                 groups=1, width_per_group=64, replace_stride_with_dilation=None, fp16=False, use_preprocessing=True):
         super(IResNet, self).__init__()
         self.extra_gflops = 0.0
         self.fp16 = fp16
         self.inplanes = 64
         self.dilation = 1
+                     
+        self.use_preprocessing = use_preprocessing
+        if use_preprocessing:
+            self.preprocessor = CustomInputPreprocessor(noise_std=noise_std)
+
         if replace_stride_with_dilation is None:
             replace_stride_with_dilation = [False, False, False]
         if len(replace_stride_with_dilation) != 3:
@@ -213,6 +218,9 @@ class IResNet(nn.Module):
 
     def forward(self, x):
         with torch.cuda.amp.autocast(self.fp16):
+            if self.use_preprocessing:
+                x = self.preprocessor(x)
+            
             x = self.conv1(x)
             x = self.bn1(x)
             x = self.prelu(x)
