@@ -6,7 +6,7 @@ from easydict import EasyDict as edict
 
 config = edict()
 config.margin_list = (1.0, 0.5, 0.0)
-config.network = "r50"
+config.network = "r50_fan"
 config.resume = False
 config.output = None
 config.embedding_size = 512
@@ -24,5 +24,5 @@ config.num_classes = 21083
 config.num_image = 501196
 config.num_epoch = 20
 config.warmup_epoch = 0
-config.val_targets = ['lfw']
+config.val_targets = []
 # config.val_targets = ['lfw', 'cfp_fp', "agedb_30"]
