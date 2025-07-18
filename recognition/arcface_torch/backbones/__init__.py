@@ -1,5 +1,6 @@
 from .iresnet import iresnet18, iresnet34, iresnet100, iresnet200
 from .custom_iresnet import iresnet50
+from .iresnet_fan import iresnet50_fan
 from .mobilefacenet import get_mbf
 
 
@@ -11,6 +12,8 @@ def get_model(name, **kwargs):
         return iresnet34(False, **kwargs)
     elif name == "r50":
         return iresnet50(False, **kwargs)
+    elif name == "r50_fan":
+        return iresnet50_fan(False, **kwargs)
     elif name == "r100":
         return iresnet100(False, **kwargs)
     elif name == "r200":
