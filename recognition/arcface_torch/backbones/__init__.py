@@ -1,5 +1,5 @@
 from .iresnet import iresnet18, iresnet34, iresnet100, iresnet200
-from .testrenet import iresnet50
+from .testresnet import iresnet50
 from .mobilefacenet import get_mbf
 
 
