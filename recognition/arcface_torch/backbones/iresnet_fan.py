@@ -108,7 +108,7 @@ class IResNet(nn.Module):
 
     def __init__(self, block, layers, dropout=0, num_features=512, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None, fp16=False,
-                 use_ffm=True, use_fan=True):
+                 use_ffm=False, use_fan=True):
         super(IResNet, self).__init__()
         self.extra_gflops = 0.0
         self.fp16 = fp16
